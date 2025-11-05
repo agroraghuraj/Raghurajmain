@@ -1,0 +1,347 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /**
+   * Tailwind CSS theme
+   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
+   * A different format will require also updating the theme in tailwind.config.ts.
+  */
+  
+  /* Toast positioning fixes */
+  [data-radix-toast-viewport] {
+    position: fixed !important;
+    top: 1rem !important;
+    right: 1rem !important;
+    z-index: 100 !important;
+    max-width: 24rem !important;
+    max-height: calc(100vh - 2rem) !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+  }
+  
+  @media (max-width: 640px) {
+    [data-radix-toast-viewport] {
+      top: 1rem !important;
+      left: 50% !important;
+      right: auto !important;
+      transform: translateX(-50%) !important;
+      max-width: calc(100vw - 2rem) !important;
+      /* Ensure toasts don't overlap with notification dropdown */
+      margin-top: 0 !important;
+    }
+  }
+  
+  /* Sonner toast positioning fixes */
+  [data-sonner-toaster] {
+    position: fixed !important;
+    top: 1rem !important;
+    right: 1rem !important;
+    z-index: 100 !important;
+    max-width: 24rem !important;
+    max-height: calc(100vh - 2rem) !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+  }
+  
+  @media (max-width: 640px) {
+    [data-sonner-toaster] {
+      top: 1rem !important;
+      left: 50% !important;
+      right: auto !important;
+      transform: translateX(-50%) !important;
+      max-width: calc(100vw - 2rem) !important;
+      /* Ensure toasts don't overlap with notification dropdown */
+      margin-top: 0 !important;
+    }
+  }
+  
+  /* Ensure toast content is pointer-events-auto */
+  [data-sonner-toast],
+  [data-radix-toast] {
+    pointer-events: auto !important;
+  }
+  
+  /* Prevent horizontal scrolling when notification dropdown is open */
+body.notification-open {
+  overflow-x: hidden !important;
+}
+
+/* Mobile Edit Modal Fixes */
+@media (max-width: 640px) {
+  /* Prevent horizontal scrolling in edit modal */
+  [data-radix-dialog-content] {
+    max-width: calc(100vw - 8px) !important;
+    margin: 4px !important;
+    overflow-x: hidden !important;
+  }
+  
+  /* Ensure table doesn't cause horizontal scroll */
+  .mobile-table-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    max-width: 100% !important;
+  }
+  
+  /* Prevent input fields from causing overflow */
+  .mobile-table-container input,
+  .mobile-table-container select,
+  .mobile-table-container textarea {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  
+  /* Ensure buttons don't overflow */
+  .mobile-table-container button {
+    min-width: auto !important;
+    max-width: 100% !important;
+  }
+  
+  /* Better text handling in table cells */
+  .mobile-table-container td,
+  .mobile-table-container th {
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    hyphens: auto !important;
+    white-space: nowrap !important;
+    text-overflow: ellipsis !important;
+    overflow: hidden !important;
+  }
+  
+  /* Ensure currency values don't overlap */
+  .mobile-table-container .currency-cell {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums !important;
+    font-family: 'Courier New', monospace !important;
+  }
+  
+  /* Better input field sizing */
+  .mobile-table-container input[type="number"] {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+}
+
+/* Global fix to prevent mouse wheel scrolling on number inputs */
+input[type="number"] {
+  /* Prevent mouse wheel from changing number input values */
+  -moz-appearance: textfield;
+}
+
+/* Hide the spinner arrows for webkit browsers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Prevent wheel events on number inputs */
+input[type="number"]:focus {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+  
+  /* Notification dropdown positioning fixes */
+  .notification-dropdown {
+    position: absolute !important;
+    z-index: 40 !important;
+    max-height: calc(100vh - 8rem) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    /* Ensure proper positioning */
+    transform: translateX(0) !important;
+    /* Ensure it doesn't extend beyond viewport */
+    contain: layout style !important;
+  }
+  
+  @media (max-width: 640px) {
+    .notification-dropdown {
+      left: 0.5rem !important;
+      right: 0.5rem !important;
+      width: auto !important;
+      max-width: none !important;
+      min-width: 280px !important;
+      max-height: calc(100vh - 6rem) !important;
+      /* Ensure proper touch targets */
+      -webkit-overflow-scrolling: touch !important;
+      /* Prevent horizontal overflow */
+      box-sizing: border-box !important;
+      /* Ensure it stays within viewport */
+      transform: translateX(0) !important;
+    }
+    
+    .notification-dropdown .notification-item {
+      min-height: 60px !important;
+    }
+    
+    .notification-dropdown button {
+      min-height: 36px !important;
+      padding: 8px 12px !important;
+    }
+    
+    /* Prevent text overflow in notification content */
+    .notification-dropdown .notification-item {
+      word-wrap: break-word !important;
+      overflow-wrap: break-word !important;
+      hyphens: auto !important;
+    }
+    
+    .notification-dropdown p,
+    .notification-dropdown h4 {
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+    }
+  }
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 158 64% 9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 158 64% 9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 158 64% 9%;
+
+    --primary: 142 76% 36%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 138 76% 97%;
+    --secondary-foreground: 142 76% 36%;
+
+    --muted: 138 76% 97%;
+    --muted-foreground: 142 69% 40%;
+
+    --accent: 142 69% 58%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 138 76% 92%;
+    --input: 138 76% 92%;
+    --ring: 142 76% 36%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 158 64% 9%;
+    --foreground: 210 20% 98%;
+
+    --card: 158 50% 12%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 158 50% 12%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 142 69% 58%;
+    --primary-foreground: 158 64% 9%;
+
+    --secondary: 158 50% 15%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 158 50% 15%;
+    --muted-foreground: 142 40% 70%;
+
+    --accent: 158 50% 15%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 158 50% 15%;
+    --input: 158 50% 15%;
+    --ring: 142 69% 58%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .scrollbar-visible {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted));
+  }
+
+  .scrollbar-visible::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground));
+    border-radius: 4px;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+  }
+
+  .scrollbar-hide {
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+
+  /* Print-specific styles for table borders */
+  @media print {
+    table, th, td {
+      border: 1px solid #000 !important;
+      border-collapse: collapse !important;
+    }
+    
+    th, td {
+      padding: 8px !important;
+    }
+    
+    /* Ensure all borders are visible in print */
+    * {
+      -webkit-print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+  }
+}

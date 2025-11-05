@@ -1,0 +1,1546 @@
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ArrowLeft, Receipt, FileText, Quote, Search, Plus, Package, Calculator, Edit, Trash2, TestTube } from "lucide-react";
+import productService from "@/services/productService";
+import { useToast } from "@/hooks/use-toast";
+import { useCompany } from "@/contexts/CompanyContext";
+import AddProductModal from "./AddProductModal";
+import { billingService } from "@/services/billingService";
+import { getNumericInputValue } from "@/lib/utils";
+
+interface InvoiceCreationPageProps {
+  customerName: string;
+  customerData?: any;
+  onBack: () => void;
+  onContinue: (billingType: string, items: any[], subtotal: number, billId?: string | null, isRegistered?: boolean, billNumber?: string | null) => void;
+}
+
+const billingTypes = [
+  {
+    id: "gst",
+    name: "GST Bill",
+    description: "Taxable invoice with GST",
+    color: "bg-green-100 text-green-800 border-green-200",
+    iconColor: "text-green-600",
+  },
+  {
+    id: "non-gst",
+    name: "Non-GST",
+    description: "Non-taxable invoice",
+    color: "bg-blue-100 text-blue-800 border-blue-200",
+    iconColor: "text-blue-600",
+  },
+  {
+    id: "quotation",
+    name: "Quotation",
+    description: "Price quote for customer",
+    color: "bg-purple-100 text-purple-800 border-purple-200",
+    iconColor: "text-purple-600",
+  },
+];
+
+export default function InvoiceCreationPage({ customerName, customerData, onBack, onContinue }: InvoiceCreationPageProps) {
+  const { toast } = useToast();
+  const { companyInfo } = useCompany();
+  const [selectedBillingType, setSelectedBillingType] = useState<string>("");
+  const [items, setItems] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [products, setProducts] = useState<any[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+
+  // Function declarations (moved up to avoid hoisting issues)
+  const updateItemQuantity = (itemId: string, quantity: number) => {
+    console.log('🔄 updateItemQuantity called:', { itemId, quantity, currentItems: items });
+    if (quantity < 1) return;
+    const updatedItems = items.map(item => {
+      if (item.id === itemId) {
+        // Check stock quantity if available
+        if (item.stockQuantity !== undefined && quantity > item.stockQuantity) {
+          toast({
+            title: "Insufficient Stock",
+            description: `Cannot add more ${item.name}. Available: ${item.stockQuantity}, Requested: ${quantity}`,
+            variant: "destructive",
+          });
+          return item;
+        }
+        
+        // New GST method: entered price = total including GST
+        if (selectedBillingType === "gst" && item.gstPercent > 0) {
+          const totalEnteredPrice = item.price * quantity; // Total including GST
+          const baseTotal = totalEnteredPrice / (1 + item.gstPercent / 100); // Reverse calculate base amount
+          const gstAmount = totalEnteredPrice - baseTotal; // Calculate GST amount
+          const total = baseTotal; // Store base amount (after removing GST)
+          
+          return {
+            ...item,
+            quantity,
+            total: total,
+            gstAmount: gstAmount,
+          };
+        } else {
+          // NON-GST or no GST: price is the actual price
+          const baseTotal = item.price * quantity;
+          const total = baseTotal;
+          
+          return {
+            ...item,
+            quantity,
+            total: total,
+            gstAmount: 0,
+          };
+        }
+      }
+      return item;
+    });
+    console.log('🔄 Updated items:', updatedItems);
+    setItems(updatedItems);
+  };
+
+  // Handle API calls for item addition
+  const handleItemAddition = async (updatedItems: any[]) => {
+    try {
+      if (!isBillRegistered) {
+        // First item - call register API
+        console.log("🔄 First item added - calling register API");
+        const billData = {
+          customerName: customerName,
+          customerPhone: customerData?.phone || "0000000000", // Use real customer phone
+          customerAddress: customerData?.address || "Default Address", // Use real customer address
+          pincode: customerData?.pincode || "", // Include pincode from customer data
+          customerState: customerData?.state || "", // Include customer state for GST/IGST logic
+          // Trigger state-based GST/IGST calculation
+          state: customerData?.state || "", // Additional state field for backend
+          // billNumber will be auto-generated by newBill.js pre-save hook
+          billType: (selectedBillingType === "non-gst" ? "NON_GST" : selectedBillingType === "demo" ? "Demo" : selectedBillingType.toUpperCase()) as "GST" | "NON_GST" | "QUOTATION" | "Demo",
+          items: updatedItems.map(item => ({
+            itemName: item.name,
+            itemPrice: item.price,
+            itemQuantity: item.quantity,
+            itemTotal: item.total
+          })),
+          paymentType: "Full" as "Full" | "Partial",
+          paidAmount: 0,
+          paymentMethod: "cash" as "cash" | "online" | "mixed",
+        };
+
+        console.log("🔄 Bill data being sent:", billData);
+        const response = await billingService.createBill(billData);
+        console.log("🔄 Register API response:", response);
+        
+        if (response && response.id) {
+          setCurrentBillId(response.id);
+          setCurrentBillNumber(response.billNumber);
+          setIsBillRegistered(true);
+          console.log("🔄 Bill registered successfully:", response.id);
+        }
+      } else {
+        // Subsequent items - call update API
+        console.log("🔄 Subsequent item added - calling update API");
+        const updateData = {
+          items: updatedItems.map(item => ({
+            itemName: item.name,
+            itemPrice: item.price,
+            itemQuantity: item.quantity,
+            itemTotal: item.total
+          }))
+        };
+
+        console.log("🔄 Update data being sent:", updateData);
+        const response = await billingService.updateBill(currentBillId!, updateData);
+        console.log("🔄 Update API response:", response);
+      }
+    } catch (error: any) {
+      console.error("Error in handleItemAddition:", error);
+      
+      // Handle NON GST bill limit exceeded error
+      if (error?.response?.data?.message?.includes("NON GST bill limit exceeded")) {
+        const errorData = error.response.data;
+        toast({
+          title: "NON GST Bill Limit Exceeded",
+          description: `${errorData.message}. Current count: ${errorData.currentCount}/${errorData.limit}. Financial year: ${errorData.financialYear}`,
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      // Handle other errors
+      toast({
+        title: "Error",
+        description: "Failed to save item. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Debug customer data
+  useEffect(() => {
+    console.log('🔍 InvoiceCreationPage - Customer Data Debug:');
+    console.log('📄 customerName:', customerName);
+    console.log('📄 customerData:', customerData);
+    console.log('📄 customerData.state:', customerData?.state);
+    console.log('📄 customerData.address:', customerData?.address);
+    console.log('📄 customerData.pincode:', customerData?.pincode);
+    console.log('📄 companyInfo.address.state:', companyInfo?.address?.state);
+  }, [customerName, customerData, companyInfo]);
+  
+  // Manual product entry state
+  const [manualProduct, setManualProduct] = useState({
+    name: "",
+    quantity: 1,
+    price: 0,
+    gstPercent: 0
+  });
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [currentBillId, setCurrentBillId] = useState<string | null>(null);
+  const [currentBillNumber, setCurrentBillNumber] = useState<string | null>(null);
+  const [isBillRegistered, setIsBillRegistered] = useState<boolean>(false);
+
+  // Get company's state from company info
+  const getCompanyState = () => {
+    return companyInfo?.address?.state || '';
+  };
+
+  // Check if customer is from same state as company
+  const isSameState = () => {
+    const companyState = getCompanyState();
+    const customerState = customerData?.state;
+    console.log('🔍 isSameState Debug:');
+    console.log('🔍 Company State:', companyState);
+    console.log('🔍 Customer State:', customerState);
+    console.log('🔍 States match:', companyState === customerState);
+    console.log('🔍 Company State (lowercase):', companyState?.toLowerCase());
+    console.log('🔍 Customer State (lowercase):', customerState?.toLowerCase());
+    return companyState?.toLowerCase() === customerState?.toLowerCase();
+  };
+
+  // Get appropriate tax rate based on state
+  const getTaxRate = () => {
+    console.log('🔍 getTaxRate Debug:');
+    console.log('🔍 Customer data:', customerData);
+    console.log('🔍 Customer state:', customerData?.state);
+    console.log('🔍 Company Info:', companyInfo);
+    console.log('🔍 Is same state:', isSameState());
+    
+    if (isSameState()) {
+      // Same state - use GST (applied to individual products)
+      console.log('🔍 Same state - using GST on products');
+      // Find the state-specific GST rate from company settings
+      const customerState = customerData?.state;
+      if (customerState && companyInfo?.states) {
+        const stateInfo = companyInfo.states.find(state => 
+          state.name.toLowerCase() === customerState.toLowerCase()
+        );
+        if (stateInfo && stateInfo.gstRate > 0) {
+          console.log('🔍 Found state GST rate:', stateInfo.gstRate);
+          return stateInfo.gstRate;
+        }
+      }
+      // Fallback to default GST rate from company settings
+      const defaultRate = companyInfo?.defaultGstRate || 18;
+      console.log('🔍 Using default GST rate:', defaultRate);
+      return defaultRate;
+    } else {
+      // Different state - use IGST (applied to subtotal)
+      console.log('🔍 Different state - using IGST on subtotal');
+      // For IGST, we should use the state-specific rate from company settings
+      const customerState = customerData?.state;
+      if (customerState && companyInfo?.states) {
+        const stateInfo = companyInfo.states.find(state => 
+          state.name.toLowerCase() === customerState.toLowerCase()
+        );
+        if (stateInfo && stateInfo.gstRate > 0) {
+          console.log('🔍 Found state-specific IGST rate:', stateInfo.gstRate);
+          return stateInfo.gstRate;
+        }
+      }
+      // Fallback to default GST rate for IGST
+      const defaultRate = companyInfo?.defaultGstRate || 18;
+      console.log('🔍 Using default IGST rate:', defaultRate);
+      return defaultRate;
+    }
+  };
+
+  // Get tax type (GST for same state, IGST for different state)
+  const getTaxType = () => {
+    return isSameState() ? 'GST' : 'IGST';
+  };
+
+  // State for calculated totals
+  const [subtotal, setSubtotal] = useState(0);
+  const [gstTotal, setGstTotal] = useState(0);
+  const [grandTotal, setGrandTotal] = useState(0);
+
+  // Initial calculation when component mounts
+  useEffect(() => {
+    console.log('🔄 Initial calculation on mount');
+    // Use base amounts (after removing GST) for subtotal calculation
+    const initialSubtotal = items.reduce((sum, item) => sum + (item.total || 0), 0);
+    setSubtotal(initialSubtotal);
+    
+    let initialGstTotal = 0;
+    if (selectedBillingType === "gst") {
+      // Use the stored GST amount for each item
+      initialGstTotal = items.reduce((sum, item) => {
+        const itemGst = item.gstAmount || 0;
+        return sum + itemGst;
+      }, 0);
+    }
+    setGstTotal(initialGstTotal);
+    setGrandTotal(initialSubtotal + initialGstTotal); // Subtotal + GST = Total
+  }, []); // Run only on mount
+
+  // Calculate totals whenever items change
+  useEffect(() => {
+    console.log('🔄 Recalculating totals - items:', items);
+    // Use base amounts (after removing GST) for subtotal calculation
+    const newSubtotal = items.reduce((sum, item) => sum + (item.total || 0), 0);
+    console.log('🔄 New subtotal:', newSubtotal);
+    setSubtotal(newSubtotal);
+    
+    let newGstTotal = 0;
+    if (selectedBillingType === "gst") {
+      // Use the stored GST amount for each item
+      newGstTotal = items.reduce((sum, item) => {
+        const itemGst = item.gstAmount || 0;
+        console.log(`🔄 Item ${item.name}: GST amount: ${itemGst}`);
+        return sum + itemGst;
+      }, 0);
+    }
+    console.log('🔄 New GST total:', newGstTotal);
+    setGstTotal(newGstTotal);
+    const newGrandTotal = newSubtotal + newGstTotal; // Subtotal + GST = Total
+    console.log('🔄 New grand total:', newGrandTotal);
+    setGrandTotal(newGrandTotal);
+  }, [items, selectedBillingType]);
+
+  // Search products with debouncing
+  useEffect(() => {
+    if (searchTerm.trim()) {
+      const timer = setTimeout(() => {
+        searchProducts(searchTerm);
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      setProducts([]);
+    }
+  }, [searchTerm]);
+
+  // Initialize manual product with appropriate tax rate
+  useEffect(() => {
+    const taxRate = selectedBillingType === "gst" ? getTaxRate() : 0;
+    console.log('🔍 Setting manual product GST rate:', taxRate);
+    console.log('🔍 Current manualProduct before update:', manualProduct);
+    setManualProduct(prev => {
+      const updated = {
+        ...prev,
+        gstPercent: taxRate
+      };
+      console.log('🔍 Updated manualProduct:', updated);
+      return updated;
+    });
+  }, [selectedBillingType, customerData?.state, companyInfo?.address?.state, companyInfo?.defaultGstRate]);
+
+  const searchProducts = async (query: string) => {
+    try {
+      setIsLoadingProducts(true);
+      console.log("🔍 Searching products for query:", query);
+      const result = await productService.searchProducts(query);
+      console.log("🔍 Search result:", result);
+      setProducts(result || []);
+    } catch (error) {
+      console.error("Error searching products:", error);
+      setProducts([]);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
+
+  const selectProduct = (product: any) => {
+    setSelectedProduct(product);
+  };
+
+  const clearSelection = () => {
+    setSelectedProduct(null);
+    setSearchTerm("");
+    setProducts([]);
+  };
+
+  // Helper function to calculate actual price (after reducing GST) for display
+  const getActualPrice = (product: any) => {
+    if (selectedBillingType === "gst" && product.gstPercent > 0) {
+      // New GST method: product.price is total including GST, need to show actual price
+      const totalPrice = product.price;
+      const actualPrice = totalPrice / (1 + product.gstPercent / 100);
+      return Math.round(actualPrice * 100) / 100; // Round to 2 decimal places
+    } else {
+      // NON-GST or no GST: price is the actual price
+      return product.price;
+    }
+  };
+
+  // Handle manual product addition
+  const handleManualProductAdd = async () => {
+    if (isAddingProduct) return; // Prevent multiple clicks
+    
+    if (!manualProduct.name.trim() || manualProduct.price <= 0) {
+      toast({
+        title: "Invalid Product",
+        description: "Please enter a valid product name and price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsAddingProduct(true);
+
+    try {
+      // If GST is enabled, the entered price is the total amount including GST
+      // We need to reverse-calculate the base price
+      const gstPercent = (selectedBillingType === "gst") ? manualProduct.gstPercent : 0;
+      let basePrice, baseTotal, gstAmount, total;
+      
+      if (selectedBillingType === "gst" && gstPercent > 0) {
+        // Reverse calculate: if total = base + (base * gst%), then base = total / (1 + gst%/100)
+        basePrice = manualProduct.price / (1 + gstPercent / 100);
+        baseTotal = basePrice * manualProduct.quantity;
+        gstAmount = baseTotal * (gstPercent / 100);
+        total = manualProduct.price * manualProduct.quantity; // This is the entered total
+      } else {
+        // For non-GST bills, the entered price is the base price
+        basePrice = manualProduct.price;
+        baseTotal = basePrice * manualProduct.quantity;
+        gstAmount = 0;
+        total = baseTotal;
+      }
+      
+      console.log('🔍 Manual product addition debug:', {
+        manualProduct: manualProduct,
+        selectedBillingType: selectedBillingType,
+        gstPercent: gstPercent,
+        gstAmount: gstAmount,
+        total: total,
+        isSameState: isSameState()
+      });
+      
+      // Check if product with same name already exists
+      const existingItem = items.find(item => 
+        item.name.toLowerCase().trim() === manualProduct.name.toLowerCase().trim()
+      );
+
+      let updatedItems;
+      if (existingItem) {
+        // Update quantity instead of adding duplicate
+        updatedItems = items.map(item => 
+          item.id === existingItem.id 
+            ? { ...item, quantity: item.quantity + manualProduct.quantity }
+            : item
+        );
+        setItems(updatedItems);
+        
+        toast({
+          title: "Product Updated",
+          description: `Quantity increased for ${manualProduct.name.trim()}.`,
+        });
+      } else {
+        const newItem = {
+          id: `manual-${Date.now()}`,
+          name: manualProduct.name.trim(),
+          description: "Manual product entry",
+          price: manualProduct.price, // Use the entered price (total amount including GST)
+          basePrice: basePrice, // Store the calculated base price
+          quantity: manualProduct.quantity,
+          total: baseTotal, // Show the base amount (after removing GST)
+          gstPercent: gstPercent,
+          gstAmount: gstAmount,
+        };
+
+        updatedItems = [...items, newItem];
+        setItems(updatedItems);
+        
+        toast({
+          title: "Product Added",
+          description: `${newItem.name} has been added to the invoice.`,
+        });
+      }
+
+      // Call API to register/update bill
+      await handleItemAddition(updatedItems);
+
+      // Reset manual product form with correct GST rate
+      const taxRate = selectedBillingType === "gst" ? getTaxRate() : 0;
+      setManualProduct({
+        name: "",
+        quantity: 1,
+        price: 0,
+        gstPercent: taxRate
+      });
+    } finally {
+      setIsAddingProduct(false);
+    }
+  };
+
+  const addSelectedItem = async () => {
+    if (!selectedProduct || isAddingProduct) return; // Prevent multiple clicks
+    
+    // Check if product is out of stock
+    if (selectedProduct.stockQuantity <= 0) {
+      toast({
+        title: "Out of Stock",
+        description: `${selectedProduct.name} is currently out of stock. Available quantity: ${selectedProduct.stockQuantity}.`,
+        variant: "destructive",
+      });
+      
+      // Clear the selected product and search input immediately
+      setSelectedProduct(null);
+      setSearchTerm("");
+      setProducts([]);
+      
+      console.log('🔄 Cleared selection after out-of-stock attempt');
+      return;
+    }
+
+    setIsAddingProduct(true);
+
+    try {
+      const existingItem = items.find(item => item.id === selectedProduct.id);
+      if (existingItem) {
+        // Check if adding one more would exceed stock
+        if (existingItem.quantity + 1 > selectedProduct.stockQuantity) {
+          toast({
+            title: "Insufficient Stock",
+            description: `Cannot add more ${selectedProduct.name}. Available: ${selectedProduct.stockQuantity}, Requested: ${existingItem.quantity + 1}`,
+            variant: "destructive",
+          });
+          return;
+        }
+        updateItemQuantity(existingItem.id, existingItem.quantity + 1);
+      } else {
+        // For GST bills: selectedProduct.price is the total including GST, need to reverse-calculate base price
+        // For NON-GST bills: selectedProduct.price is the actual price
+        const gstPercent = (selectedBillingType === "gst") ? selectedProduct.gstPercent : 0;
+        let basePrice, baseTotal, gstAmount, total;
+        
+        if (selectedBillingType === "gst" && gstPercent > 0) {
+          // New GST method: entered price = total including GST
+          total = selectedProduct.price; // This is the total including GST
+          baseTotal = total / (1 + gstPercent / 100); // Reverse calculate base amount
+          gstAmount = total - baseTotal; // Calculate GST amount
+          basePrice = baseTotal; // Base price per unit
+        } else {
+          // NON-GST or no GST: price is the actual price
+          basePrice = selectedProduct.price;
+          baseTotal = basePrice;
+          gstAmount = 0;
+          total = baseTotal;
+        }
+        
+        const newItem = {
+          id: selectedProduct.id,
+          name: selectedProduct.name,
+          description: selectedProduct.description || "This is a product",
+          price: selectedProduct.price, // Store the entered price (total including GST for GST bills)
+          quantity: 1,
+          total: baseTotal, // Store the base amount (after removing GST)
+          gstPercent: gstPercent,
+          gstAmount: gstAmount,
+          stockQuantity: selectedProduct.stockQuantity, // Store stock quantity for validation
+        };
+        const updatedItems = [...items, newItem];
+        setItems(updatedItems);
+        
+        // Call appropriate API based on whether this is the first item
+        await handleItemAddition(updatedItems);
+      }
+      setSelectedProduct(null);
+      setSearchTerm("");
+      setProducts([]);
+    } finally {
+      setIsAddingProduct(false);
+    }
+  };
+
+  const addItem = async (product: any) => {
+    // Check if product is out of stock
+    if (product.stockQuantity <= 0) {
+      toast({
+        title: "Out of Stock",
+        description: `${product.name} is currently out of stock. Available quantity: ${product.stockQuantity}.`,
+        variant: "destructive",
+      });
+      
+      // Clear the selected product and search input immediately
+      setSelectedProduct(null);
+      setSearchTerm("");
+      setProducts([]);
+      
+      console.log('🔄 Cleared selection after out-of-stock attempt');
+      return;
+    }
+
+    const existingItem = items.find(item => item.id === product.id);
+    if (existingItem) {
+      // Check if adding one more would exceed stock
+      if (existingItem.quantity + 1 > product.stockQuantity) {
+        toast({
+          title: "Insufficient Stock",
+          description: `Cannot add more ${product.name}. Available: ${product.stockQuantity}, Requested: ${existingItem.quantity + 1}`,
+          variant: "destructive",
+        });
+        return;
+      }
+      updateItemQuantity(existingItem.id, existingItem.quantity + 1);
+    } else {
+      console.log('🔍 Adding product:', product.name);
+      console.log('🔍 Product GST:', product.gstPercent);
+      console.log('🔍 Billing Type:', selectedBillingType);
+      
+      // For GST bills: product.price is the total including GST, need to reverse-calculate base price
+      // For NON-GST bills: product.price is the actual price
+      const gstPercent = (selectedBillingType === "gst") ? product.gstPercent : 0;
+      let basePrice, baseTotal, gstAmount, total;
+      
+      if (selectedBillingType === "gst" && gstPercent > 0) {
+        // New GST method: entered price = total including GST
+        total = product.price; // This is the total including GST
+        baseTotal = total / (1 + gstPercent / 100); // Reverse calculate base amount
+        gstAmount = total - baseTotal; // Calculate GST amount
+        basePrice = baseTotal; // Base price per unit
+      } else {
+        // NON-GST or no GST: price is the actual price
+        basePrice = product.price;
+        baseTotal = basePrice;
+        gstAmount = 0;
+        total = baseTotal;
+      }
+      
+      const newItem = {
+        id: product.id,
+        name: product.name,
+        description: product.description || "This is a product",
+        price: product.price, // Store the entered price (total including GST for GST bills)
+        quantity: 1,
+        total: baseTotal, // Store the base amount (after removing GST)
+        gstPercent: gstPercent,
+        gstAmount: gstAmount,
+        stockQuantity: product.stockQuantity, // Store stock quantity for validation
+      };
+      const updatedItems = [...items, newItem];
+      setItems(updatedItems);
+      
+      // Call appropriate API based on whether this is the first item
+      await handleItemAddition(updatedItems);
+    }
+    setSearchTerm("");
+    setProducts([]);
+  };
+
+
+
+  const updateItemPrice = (itemId: string, price: number) => {
+    if (price < 0) return;
+    const updatedItems = items.map(item => {
+      if (item.id === itemId) {
+        // New GST method: entered price = total including GST
+        if (selectedBillingType === "gst" && item.gstPercent > 0) {
+          const totalEnteredPrice = price * item.quantity; // Total including GST
+          const baseTotal = totalEnteredPrice / (1 + item.gstPercent / 100); // Reverse calculate base amount
+          const gstAmount = totalEnteredPrice - baseTotal; // Calculate GST amount
+          return {
+            ...item,
+            price,
+            total: baseTotal, // Store base amount (after removing GST)
+            gstAmount: gstAmount,
+          };
+        } else {
+          // NON-GST or no GST: price is the actual price
+          const baseTotal = price * item.quantity;
+          return {
+            ...item,
+            price,
+            total: baseTotal,
+            gstAmount: 0,
+          };
+        }
+      }
+      return item;
+    });
+    setItems(updatedItems);
+    
+    // No API call for price changes - only update local state
+  };
+
+  const removeItem = (itemId: string) => {
+    const updatedItems = items.filter(item => item.id !== itemId);
+    setItems(updatedItems);
+    
+    // No API call for item removal - only update local state
+  };
+
+  const handleContinue = () => {
+    if (!selectedBillingType) {
+      toast({
+        title: "Error",
+        description: "Please select a billing type",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (items.length === 0) {
+      toast({
+        title: "Error",
+        description: "Please add at least one item",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Continue to payment without calling any API
+    onContinue(selectedBillingType, items, subtotal, currentBillId, isBillRegistered, currentBillNumber);
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" onClick={onBack} className="flex items-center gap-2">
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Button>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Create Invoice</h1>
+          <p className="text-gray-600">Customer: {customerName}</p>
+        </div>
+      </div>
+
+      {/* Desktop Layout */}
+      <div className="hidden lg:block space-y-6">
+        {/* Billing Type Section - Flex Layout */}
+        <Card className="shadow-md rounded-2xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Receipt className="h-5 w-5" />
+              Billing Type
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-4">
+              {(companyInfo?.showNonGstBills ? billingTypes : billingTypes.filter(t => t.id !== "non-gst")).map((type) => (
+                <div
+                  key={type.id}
+                  className={`flex-1 p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                    selectedBillingType === type.id
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                  onClick={() => setSelectedBillingType(type.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${type.color}`}>
+                      {type.id === "gst" && <Receipt className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "non-gst" && <FileText className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "quotation" && <Quote className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "demo" && <TestTube className={`h-5 w-5 ${type.iconColor}`} />}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">{type.name}</h3>
+                      <p className="text-sm text-gray-600">{type.description}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Add Items Section - Full Width */}
+        <Card className="shadow-md rounded-2xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Package className="h-5 w-5" />
+              Add Items
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+              {/* Conditional rendering based on product search setting */}
+              {(() => {
+                console.log('🔍 InvoiceCreationPage - companyInfo:', companyInfo);
+                console.log('🔍 InvoiceCreationPage - isProductSearch:', companyInfo?.isProductSearch);
+                return companyInfo?.isProductSearch;
+              })() ? (
+                // Product Search Mode
+                <>
+                  {/* New Product Button - Top Priority */}
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add New Product
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                          <Package className="h-5 w-5" />
+                          Add New Product
+                        </DialogTitle>
+                      </DialogHeader>
+                      <AddProductModal onClose={() => {}} />
+                    </DialogContent>
+                  </Dialog>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="search">Search Products</Label>
+                    <Input
+                      id="search"
+                      placeholder="Search products..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="rounded-lg"
+                    />
+                  </div>
+
+                  {/* Search Results */}
+                  {searchTerm && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium text-gray-700">Search Results</Label>
+                        <span className="text-xs text-gray-500">{products.length} found</span>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto space-y-2 border rounded-lg p-2 bg-gray-50">
+                        {isLoadingProducts ? (
+                          <div className="text-center py-4">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                            <p className="text-sm text-gray-500">Searching...</p>
+                          </div>
+                        ) : products.length > 0 ? (
+                          // Show only selected product if one is selected, otherwise show all products
+                          (selectedProduct ? [selectedProduct] : products).map((product) => (
+                            <div
+                              key={product.id}
+                              className={`p-3 border rounded-lg cursor-pointer transition-all duration-200 shadow-sm ${
+                                selectedProduct?.id === product.id
+                                  ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200"
+                                  : "bg-white border-gray-200 hover:bg-blue-50 hover:border-blue-200"
+                              }`}
+                              onClick={() => selectProduct(product)}
+                            >
+                              <div className="flex justify-between items-center">
+                                <div className="flex-1">
+                                  <p className="font-medium text-sm text-gray-900">{product.name}</p>
+                                  <p className="text-xs text-gray-600">₹{getActualPrice(product)}</p>
+                                  {product.description && (
+                                    <p className="text-xs text-gray-500 mt-1">{product.description}</p>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {selectedProduct?.id === product.id && (
+                                    <span className="text-xs text-blue-600 font-medium">Selected</span>
+                                  )}
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      addItem(product);
+                                    }}
+                                    className="ml-2"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-4">
+                            <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                            <p className="text-sm text-gray-500">No products found</p>
+                            <p className="text-xs text-gray-400 mt-1">Try a different search term</p>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Action Buttons - Only show when a product is selected */}
+                      {selectedProduct && (
+                        <div className="space-y-2">
+                          <Button 
+                            onClick={addSelectedItem}
+                            className="w-full bg-green-600 hover:bg-green-700 text-white"
+                            disabled={isAddingProduct}
+                          >
+                            {isAddingProduct ? (
+                              <>
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                Adding...
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add Item: {selectedProduct.name}
+                              </>
+                            )}
+                          </Button>
+                          <Button 
+                            onClick={clearSelection}
+                            variant="outline"
+                            className="w-full"
+                          >
+                            Show All Results
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Manual Product Entry Mode
+                <>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="productName">Product Name *</Label>
+                      <Input
+                        id="productName"
+                        placeholder="Enter product name"
+                        value={manualProduct.name}
+                        onChange={(e) => setManualProduct(prev => ({ ...prev, name: e.target.value }))}
+                        className="rounded-lg"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="quantity">Quantity *</Label>
+                        <Input
+                          id="quantity"
+                          type="number"
+                          min="1"
+                          value={getNumericInputValue(manualProduct.quantity, true)}
+                          onChange={(e) => setManualProduct(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                          onFocus={(e) => e.target.select()}
+                          className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          placeholder="1"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="price">Price (₹) *</Label>
+                        <Input
+                          id="price"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={getNumericInputValue(manualProduct.price)}
+                          onChange={(e) => setManualProduct(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                          className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      {selectedBillingType === "gst" && (
+                        <div className="space-y-2">
+                          <Label htmlFor="gstPercent">GST %</Label>
+                          <Input
+                            id="gstPercent"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            value={getNumericInputValue(manualProduct.gstPercent)}
+                            onChange={(e) => setManualProduct(prev => ({ ...prev, gstPercent: parseFloat(e.target.value) || 0 }))}
+                            className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            placeholder="18"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <Button 
+                      onClick={handleManualProductAdd}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      disabled={!manualProduct.name.trim() || manualProduct.price <= 0 || isAddingProduct}
+                    >
+                      {isAddingProduct ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                          Adding...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add Product
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {/* Selected Items */}
+              <div className="space-y-4">
+                <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                  <Package className="h-4 w-4" />
+                  Selected Items ({items.length})
+                </h4>
+                
+                {items.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">Product</th>
+                          <th className="text-center py-3 px-4 font-medium text-gray-700">Quantity</th>
+                          <th className="text-center py-3 px-4 font-medium text-gray-700">Price</th>
+                          <th className="text-center py-3 px-4 font-medium text-gray-700">GST</th>
+                          <th className="text-right py-3 px-4 font-medium text-gray-700">Total</th>
+                          <th className="text-center py-3 px-4 font-medium text-gray-700">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((item) => (
+                          <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-4 px-4">
+                              <div>
+                                <h5 className="font-semibold text-gray-900">{item.name}</h5>
+                                <p className="text-sm text-gray-600">{item.description}</p>
+                              </div>
+                            </td>
+                            <td className="py-4 px-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => updateItemQuantity(item.id, item.quantity - 1)}
+                                  disabled={item.quantity <= 1}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  -
+                                </Button>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => updateItemQuantity(item.id, parseInt(e.target.value) || 1)}
+                                  onFocus={(e) => e.target.select()}
+                                  className="h-8 w-16 text-center"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => updateItemQuantity(item.id, item.quantity + 1)}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  +
+                                </Button>
+                              </div>
+                            </td>
+                            <td className="py-4 px-4">
+                              <div className="flex items-center justify-center">
+                                <span className="text-gray-500 text-sm mr-1">₹</span>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={getNumericInputValue(item.price)}
+                                  onChange={(e) => updateItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                                  className="h-8 w-24 text-center"
+                                />
+                              </div>
+                            </td>
+                            <td className="py-4 px-4 text-center">
+                              {item.gstPercent > 0 ? (
+                                <div className="text-sm">
+                                  <div className="font-medium text-gray-900">{item.gstPercent}%</div>
+                                  <div className="text-gray-600">₹{item.gstAmount.toFixed(2)}</div>
+                                  {isSameState() && selectedBillingType === "gst" ? (
+                                    <div className="text-xs text-blue-600">
+                                      CGST: ₹{(item.gstAmount / 2).toFixed(2)} | SGST: ₹{(item.gstAmount / 2).toFixed(2)}
+                                    </div>
+                                  ) : selectedBillingType === "gst" ? (
+                                    <div className="text-xs text-green-600">
+                                      IGST: ₹{item.gstAmount.toFixed(2)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : selectedBillingType === "gst" && !isSameState() ? (
+                                <div className="text-sm">
+                                  <div className="font-medium text-gray-900">IGST {getTaxRate()}%</div>
+                                </div>
+                              ) : (
+                                <span className="text-sm text-gray-400">-</span>
+                              )}
+                            </td>
+                            <td className="py-4 px-4 text-right">
+                              <div>
+                                <div className="font-semibold text-gray-900">₹{(item.total || 0).toFixed(2)}</div>
+                              </div>
+                            </td>
+                            <td className="py-4 px-4 text-center">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removeItem(item.id)}
+                                className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+                    <Package className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+                    <p className="text-gray-500 mb-2">No items added yet</p>
+                    <p className="text-sm text-gray-400">Search for products or add new ones to get started</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+        {/* Invoice Summary Section - Below Add Items */}
+        <Card className="shadow-md rounded-2xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Calculator className="h-5 w-5" />
+              Invoice Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span>Subtotal:</span>
+                <span>₹{subtotal.toFixed(2)}</span>
+              </div>
+              {selectedBillingType === "gst" && gstTotal > 0 && (
+                <div className="flex justify-between">
+                  <span>GST:</span>
+                  <span>₹{gstTotal.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="border-t pt-3 flex justify-between text-lg font-bold">
+                <span>Total:</span>
+                <span>₹{grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <Button
+              onClick={handleContinue}
+              disabled={!selectedBillingType || items.length === 0}
+              size="lg"
+              className="w-full rounded-xl bg-green-600 hover:bg-green-700 text-white"
+            >
+              Continue to Payment
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Mobile Layout - Keep original grid layout for mobile */}
+      <div className="lg:hidden grid grid-cols-1 gap-6">
+        {/* Mobile Billing Type Selection */}
+          <Card className="shadow-md rounded-2xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Receipt className="h-5 w-5" />
+                Billing Type
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {billingTypes.map((type) => (
+                <div
+                  key={type.id}
+                  className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                    selectedBillingType === type.id
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                  onClick={() => setSelectedBillingType(type.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${type.color}`}>
+                      {type.id === "gst" && <Receipt className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "non-gst" && <FileText className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "quotation" && <Quote className={`h-5 w-5 ${type.iconColor}`} />}
+                      {type.id === "demo" && <TestTube className={`h-5 w-5 ${type.iconColor}`} />}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">{type.name}</h3>
+                      <p className="text-sm text-gray-600">{type.description}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+        {/* Mobile Add Items - Same as desktop but in mobile layout */}
+          <Card className="shadow-md rounded-2xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Package className="h-5 w-5" />
+                Add Items
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+            {/* Same content as desktop add items section */}
+            {companyInfo?.isProductSearch ? (
+              // Product Search Mode - Same as desktop
+              <>
+              <Dialog>
+                <DialogTrigger asChild>
+                    <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add New Product
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Package className="h-5 w-5" />
+                      Add New Product
+                    </DialogTitle>
+                  </DialogHeader>
+                  <AddProductModal onClose={() => {}} />
+                </DialogContent>
+              </Dialog>
+
+                <div className="space-y-2">
+                  <Label htmlFor="search-mobile">Search Products</Label>
+                  <Input
+                    id="search-mobile"
+                    placeholder="Search products..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="rounded-lg"
+                  />
+                </div>
+
+                {/* Search Results - Same as desktop */}
+              {searchTerm && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium text-gray-700">Search Results</Label>
+                      <span className="text-xs text-gray-500">{products.length} found</span>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto space-y-2 border rounded-lg p-2 bg-gray-50">
+                  {isLoadingProducts ? (
+                        <div className="text-center py-4">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                          <p className="text-sm text-gray-500">Searching...</p>
+                        </div>
+                  ) : products.length > 0 ? (
+                        (selectedProduct ? [selectedProduct] : products).map((product) => (
+                      <div
+                        key={product.id}
+                            className={`p-3 border rounded-lg cursor-pointer transition-all duration-200 shadow-sm ${
+                              selectedProduct?.id === product.id
+                                ? "bg-blue-100 border-blue-300 ring-2 ring-blue-200"
+                                : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-md"
+                            }`}
+                            onClick={() => setSelectedProduct(product)}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <h5 className="font-semibold text-gray-900">{product.name}</h5>
+                                <p className="text-sm text-gray-600">{product.description}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-sm font-medium text-green-600">₹{product.price}</span>
+                                  {product.gstPercent > 0 && (
+                                    <span className="text-xs text-blue-600">GST: {product.gstPercent}%</span>
+                                  )}
+                                </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                        <div className="text-center py-4 text-gray-500">
+                          <Package className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                          <p className="text-sm">No products found</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedProduct && (
+                      <div className="space-y-2">
+                        <Button 
+                          onClick={addSelectedItem}
+                          className="w-full bg-green-600 hover:bg-green-700 text-white"
+                          disabled={isAddingProduct}
+                        >
+                          {isAddingProduct ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              Adding...
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4 mr-2" />
+                              Add Item
+                            </>
+                          )}
+                        </Button>
+                        <Button 
+                          onClick={clearSelection}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                  )}
+                </div>
+                )}
+              </>
+            ) : (
+              // Manual Product Entry Mode - Same as desktop
+              <>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="productName-mobile">Product Name *</Label>
+                    <Input
+                      id="productName-mobile"
+                      placeholder="Enter product name"
+                      value={manualProduct.name}
+                      onChange={(e) => setManualProduct(prev => ({ ...prev, name: e.target.value }))}
+                      className="rounded-lg"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="quantity-mobile">Quantity *</Label>
+                        <Input
+                        id="quantity-mobile"
+                        type="number"
+                        min="1"
+                        value={getNumericInputValue(manualProduct.quantity, true)}
+                        onChange={(e) => setManualProduct(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                        onFocus={(e) => e.target.select()}
+                        className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="1"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="price-mobile">Price (₹) *</Label>
+                      <Input
+                        id="price-mobile"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={getNumericInputValue(manualProduct.price)}
+                        onChange={(e) => setManualProduct(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                        className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gstPercent-mobile">GST %</Label>
+                      <Input
+                        id="gstPercent-mobile"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={getNumericInputValue(manualProduct.gstPercent)}
+                        onChange={(e) => setManualProduct(prev => ({ ...prev, gstPercent: parseFloat(e.target.value) || 0 }))}
+                        className="rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="18"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Tax is calculated on total subtotal, not individual products */}
+
+                  <Button 
+                    onClick={handleManualProductAdd}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white"
+                    disabled={!manualProduct.name.trim() || manualProduct.price <= 0 || isAddingProduct}
+                  >
+                    {isAddingProduct ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Adding...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Product
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+              )}
+
+            {/* Mobile Selected Items - Same table as desktop */}
+                <div className="space-y-4">
+                  <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                    <Package className="h-4 w-4" />
+                    Selected Items ({items.length})
+                  </h4>
+              
+              {items.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 px-4 font-medium text-gray-700">Product</th>
+                        <th className="text-center py-3 px-4 font-medium text-gray-700">Qty</th>
+                        <th className="text-center py-3 px-4 font-medium text-gray-700">Price</th>
+                        <th className="text-center py-3 px-4 font-medium text-gray-700">GST</th>
+                        <th className="text-right py-3 px-4 font-medium text-gray-700">Total</th>
+                        <th className="text-center py-3 px-4 font-medium text-gray-700">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                    {items.map((item) => (
+                        <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-4 px-4">
+                            <div>
+                              <h5 className="font-semibold text-gray-900 text-sm">{item.name}</h5>
+                              <p className="text-xs text-gray-600">{item.description}</p>
+                          </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateItemQuantity(item.id, item.quantity - 1)}
+                                disabled={item.quantity <= 1}
+                                className="h-6 w-6 p-0 text-xs"
+                              >
+                                -
+                              </Button>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => updateItemQuantity(item.id, parseInt(e.target.value) || 1)}
+                                onFocus={(e) => e.target.select()}
+                                className="h-6 w-12 text-center text-xs"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateItemQuantity(item.id, item.quantity + 1)}
+                                className="h-6 w-6 p-0 text-xs"
+                              >
+                                +
+                              </Button>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center justify-center">
+                              <span className="text-gray-500 text-xs mr-1">₹</span>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={getNumericInputValue(item.price)}
+                                onChange={(e) => updateItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                                className="h-6 w-20 text-center text-xs"
+                              />
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            {item.gstPercent > 0 ? (
+                              <div className="text-xs">
+                                <div className="font-medium text-gray-900">{item.gstPercent}%</div>
+                                <div className="text-gray-600">₹{item.gstAmount.toFixed(2)}</div>
+                                {isSameState() && selectedBillingType === "gst" ? (
+                                  <div className="text-xs text-blue-600">
+                                    CGST: ₹{(item.gstAmount / 2).toFixed(2)} | SGST: ₹{(item.gstAmount / 2).toFixed(2)}
+                                  </div>
+                                ) : selectedBillingType === "gst" ? (
+                                  <div className="text-xs text-green-600">
+                                    IGST: ₹{item.gstAmount.toFixed(2)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : selectedBillingType === "gst" && !isSameState() ? (
+                              <div className="text-xs">
+                                <div className="font-medium text-gray-900">IGST {getTaxRate()}%</div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )}
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div>
+                              <div className="font-semibold text-gray-900 text-sm">₹{((item.price * item.quantity) - (item.gstAmount || 0)).toFixed(2)}</div>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => removeItem(item.id)}
+                              className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  </div>
+              ) : (
+                <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+                  <Package className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+                  <p className="text-gray-500 mb-2">No items added yet</p>
+                  <p className="text-sm text-gray-400">Search for products or add new ones to get started</p>
+                </div>
+              )}
+            </div>
+            </CardContent>
+          </Card>
+
+        {/* Mobile Invoice Summary */}
+          <Card className="shadow-md rounded-2xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Calculator className="h-5 w-5" />
+                Invoice Summary
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span>Subtotal:</span>
+                  <span>₹{subtotal.toFixed(2)}</span>
+                </div>
+                {selectedBillingType === "gst" && gstTotal > 0 && (
+                  <div className="flex justify-between">
+                    <span>GST:</span>
+                    <span>₹{gstTotal.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="border-t pt-3 flex justify-between text-lg font-bold">
+                  <span>Total:</span>
+                  <span>₹{grandTotal.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <Button
+                onClick={handleContinue}
+                disabled={!selectedBillingType || items.length === 0}
+                size="lg"
+                className="w-full rounded-xl bg-green-600 hover:bg-green-700 text-white"
+              >
+                Continue to Payment
+              </Button>
+            </CardContent>
+          </Card>
+      </div>
+    </div>
+  );
+}

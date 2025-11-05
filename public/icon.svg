@@ -1,0 +1,37 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#16a34a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#15803d;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background with rounded corners -->
+  <rect width="512" height="512" rx="102" ry="102" fill="url(#bg)"/>
+  
+  <!-- Store building -->
+  <rect x="80" y="200" width="352" height="240" fill="#ffffff" rx="8"/>
+  
+  <!-- Store sign -->
+  <rect x="120" y="80" width="272" height="100" fill="#ffffff" rx="12"/>
+  
+  <!-- Store sign text area -->
+  <rect x="140" y="100" width="232" height="60" fill="#16a34a" rx="8"/>
+  
+  <!-- Door -->
+  <rect x="220" y="320" width="72" height="120" fill="#16a34a" rx="4"/>
+  
+  <!-- Door handle -->
+  <circle cx="270" cy="380" r="6" fill="#ffffff"/>
+  
+  <!-- Windows -->
+  <rect x="120" y="220" width="60" height="60" fill="#16a34a" rx="8"/>
+  <rect x="332" y="220" width="60" height="60" fill="#16a34a" rx="8"/>
+  
+  <!-- Window frames -->
+  <rect x="120" y="220" width="60" height="60" fill="none" stroke="#ffffff" stroke-width="4" rx="8"/>
+  <rect x="332" y="220" width="60" height="60" fill="none" stroke="#ffffff" stroke-width="4" rx="8"/>
+  
+  <!-- Store sign text -->
+  <text x="256" y="140" font-family="Arial, sans-serif" font-size="32" font-weight="bold" text-anchor="middle" fill="#ffffff">EM</text>
+</svg>

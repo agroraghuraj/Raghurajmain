@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create PWA Icons</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .icon-container { display: inline-block; margin: 10px; text-align: center; }
+        canvas { border: 2px solid #ddd; border-radius: 8px; background: white; }
+        .download-btn { 
+            display: block; 
+            margin-top: 10px; 
+            padding: 8px 16px; 
+            background: #16a34a; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 4px; 
+            font-size: 12px;
+        }
+        .download-btn:hover { background: #15803d; }
+    </style>
+</head>
+<body>
+    <h1>ElectroMart PWA Icons</h1>
+    <p>Click the download buttons to save each icon for your PWA.</p>
+    
+    <div id="icons"></div>
+
+    <script>
+        function createIcon(size, filename) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // Create gradient background
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#16a34a');
+            gradient.addColorStop(1, '#15803d');
+            
+            // Draw background with rounded corners
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, size * 0.15);
+            ctx.fill();
+            
+            // Draw store icon in white
+            ctx.fillStyle = '#ffffff';
+            const iconSize = size * 0.6;
+            const iconX = (size - iconSize) / 2;
+            const iconY = (size - iconSize) / 2;
+            
+            // Store building
+            ctx.fillRect(iconX + iconSize * 0.1, iconY + iconSize * 0.3, iconSize * 0.8, iconSize * 0.6);
+            
+            // Store sign
+            ctx.fillRect(iconX + iconSize * 0.2, iconY + iconSize * 0.1, iconSize * 0.6, iconSize * 0.2);
+            
+            // Door
+            ctx.fillStyle = '#16a34a';
+            ctx.fillRect(iconX + iconSize * 0.4, iconY + iconSize * 0.5, iconSize * 0.2, iconSize * 0.4);
+            
+            // Windows
+            ctx.fillStyle = '#16a34a';
+            ctx.fillRect(iconX + iconSize * 0.15, iconY + iconSize * 0.4, iconSize * 0.15, iconSize * 0.15);
+            ctx.fillRect(iconX + iconSize * 0.7, iconY + iconSize * 0.4, iconSize * 0.15, iconSize * 0.15);
+            
+            // Add text "EM" on the sign
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `bold ${size * 0.08}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('EM', iconX + iconSize * 0.5, iconY + iconSize * 0.25);
+            
+            // Create container
+            const container = document.getElementById('icons');
+            const div = document.createElement('div');
+            div.className = 'icon-container';
+            
+            // Add title
+            const title = document.createElement('h3');
+            title.textContent = `${filename} (${size}x${size})`;
+            div.appendChild(title);
+            
+            // Add canvas
+            div.appendChild(canvas);
+            
+            // Add download button
+            const downloadBtn = document.createElement('a');
+            downloadBtn.className = 'download-btn';
+            downloadBtn.textContent = 'Download';
+            downloadBtn.download = filename;
+            
+            canvas.toBlob(function(blob) {
+                downloadBtn.href = URL.createObjectURL(blob);
+            });
+            
+            div.appendChild(downloadBtn);
+            container.appendChild(div);
+        }
+        
+        // Generate all required PWA icons
+        createIcon(192, 'pwa-192x192.png');
+        createIcon(512, 'pwa-512x512.png');
+        createIcon(180, 'apple-touch-icon.png');
+        createIcon(144, 'pwa-144x144.png');
+        createIcon(96, 'pwa-96x96.png');
+        createIcon(72, 'pwa-72x72.png');
+        createIcon(48, 'pwa-48x48.png');
+    </script>
+</body>
+</html>
